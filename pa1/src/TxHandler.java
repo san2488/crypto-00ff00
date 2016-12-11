@@ -34,31 +34,31 @@ public class TxHandler {
     }
 
     public Transaction[] handleTxs(Transaction[] possibleTxs) {
-        final Set<Transaction> acceptedTransactions = new HashSet<>();
-        final Map<byte[], Transaction> hashToTx = Stream.of(possibleTxs)
+        final Map<byte[], Transaction> hashToPossibleTx = Stream.of(possibleTxs)
                 .collect(Collectors.toMap(Transaction::getHash, Function.identity()));
-        Stream.of(possibleTxs).forEach(t -> {
-            if (this.isValidTx(t)) {
-                acceptedTransactions.add(t);
-                t.getInputs().stream().forEach(i -> pool.removeUTXO(new UTXO(i.prevTxHash, i.outputIndex)));
-            }
-        });
-        return acceptedTransactions.toArray(new Transaction[acceptedTransactions.size()]);
+        return Stream.of(possibleTxs)
+                .map(tx -> handleTx(tx, hashToPossibleTx))
+                .distinct()
+                .toArray(size -> new Transaction[possibleTxs.length]);
     }
 
-    private Set<Transaction> handleTx(final Transaction tx, final Map<byte[], Transaction> hashToTx) {
-        final List<Transaction> depTxs = tx.getInputs().stream().map(i -> hashToTx.get(i.prevTxHash))
-                .filter(t -> t != null)
+    private Set<Transaction> handleTx(final Transaction tx, final Map<byte[], Transaction> hashToPossibleTx) {
+        final Set<Transaction> acceptedTransactions = new HashSet<>();
+        return handleTx(tx, hashToPossibleTx, acceptedTransactions) ? acceptedTransactions : new HashSet<>();
+    }
+    private boolean handleTx(final Transaction tx, final Map<byte[], Transaction> hashToPossibleTx,
+                             final Set<Transaction> validTransactions) {
+        final List<Transaction> depTxs = tx.getInputs().stream().map(i -> hashToPossibleTx.get(i.prevTxHash))
+                .filter(Objects::nonNull)
                 .collect(Collectors.toList());
-        if (depTxs.isEmpty()) {
-            if (this.isValidTx(tx)) {
-                final Set<Transaction> validTxs = new HashSet<>();
-                validTxs.add(tx);
-                return validTxs;
-            } else {
-                return new HashSet<>();
-            }
+        final boolean isTransactionChainValid
+                = isValidTx(tx) && depTxs.stream().allMatch(t -> this.handleTx(t, hashToPossibleTx, validTransactions));
+        if (isTransactionChainValid) {
+            validTransactions.addAll(depTxs);
+            validTransactions.add(tx);
+            return true;
+        } else {
+            return false;
         }
-        return this.handleTx(tx, hashToTx);
     }
 }
